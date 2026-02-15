@@ -60,12 +60,6 @@
                 // DEBUG: Add visual aid to confirm renderer is working
                 this.scene.background = new THREE.Color(0x505050); // Grey background
 
-                var debugGeo = new THREE.BoxGeometry(1, 1, 1);
-                var debugMat = new THREE.MeshNormalMaterial();
-                this.debugCube = new THREE.Mesh(debugGeo, debugMat);
-                this.debugCube.position.set(0, 1.5, -2); // In front of user
-                this.scene.add(this.debugCube);
-
                 // Controllers
                 this.raycaster = new THREE.Raycaster();
                 this.tempMatrix = new THREE.Matrix4();
@@ -153,8 +147,8 @@
                 path + 'l/0/0.jpg', // nx - left
                 path + 'u/0/0.jpg', // py - up
                 path + 'd/0/0.jpg', // ny - down
-                path + 'f/0/0.jpg', // pz - front
-                path + 'b/0/0.jpg'  // nz - back
+                path + 'b/0/0.jpg', // pz - back (Three.js uses +Z as back)
+                path + 'f/0/0.jpg'  // nz - front (Three.js uses -Z as front)
             ];
 
             loader.load(urls, (texture) => {
@@ -186,8 +180,8 @@
                 var y = radius * Math.sin(phi);
                 var z = -radius * Math.cos(theta) * Math.cos(phi);
 
-                var geometry = new THREE.SphereGeometry(0.5, 32, 32);
-                var material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+                var geometry = new THREE.SphereGeometry(0.2, 32, 32); // Reduced size to 20cm
+                var material = new THREE.MeshBasicMaterial({ color: 0xffffff }); // White for better visibility
                 var sphere = new THREE.Mesh(geometry, material);
 
                 sphere.position.set(x, y, z);
@@ -270,10 +264,6 @@
         animate: function () {
             // Render
             if (this.renderer && this.scene && this.camera) {
-                if (this.debugCube) {
-                    this.debugCube.rotation.x += 0.01;
-                    this.debugCube.rotation.y += 0.01;
-                }
                 this.renderer.render(this.scene, this.camera);
             }
 
