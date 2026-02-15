@@ -172,17 +172,16 @@
 
         createHotspot: function (hotspotData) {
             try {
-                var radius = 2; // Reduced from 10 to 2 meters to avoid depth conflict
+                var radius = 10;
                 var phi = hotspotData.pitch; // Elevation (-PI/2 to PI/2)
-                var theta = hotspotData.yaw; // Azimuth (Clockwise in Marzipano)
+                var theta = hotspotData.yaw; // Azimuth
 
-                // Convert Marzipano (Clockwise) to Standard (CCW) by negating theta
-                var x = -radius * Math.sin(-theta) * Math.cos(phi);
+                var x = -radius * Math.sin(theta) * Math.cos(phi);
                 var y = radius * Math.sin(phi);
-                var z = -radius * Math.cos(-theta) * Math.cos(phi);
+                var z = -radius * Math.cos(theta) * Math.cos(phi);
 
-                var geometry = new THREE.SphereGeometry(0.2, 32, 32); // 20cm size matches new scale
-                var material = new THREE.MeshBasicMaterial({ color: 0xffffff }); // White
+                var geometry = new THREE.SphereGeometry(0.2, 32, 32); // Reduced size to 20cm
+                var material = new THREE.MeshBasicMaterial({ color: 0xffffff }); // White for better visibility
                 var sphere = new THREE.Mesh(geometry, material);
 
                 sphere.position.set(x, y, z);
