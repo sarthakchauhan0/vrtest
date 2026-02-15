@@ -24,11 +24,28 @@
 
                 // Handle session end to show errors
                 this.renderer.xr.addEventListener('sessionend', () => {
+                    this.renderer.domElement.style.display = 'none'; // Hide canvas
+                    if (window.MarzipanoViewer) { // Optional: Resume Marzipano if needed
+                        // Logic to resume main viewer if paused
+                    }
                     if (this.errorLog.length > 0) {
                         this.showToast(this.errorLog.join('\n'));
                         this.errorLog = []; // Clear after showing
                     }
                 });
+
+                this.renderer.xr.addEventListener('sessionstart', () => {
+                    this.renderer.domElement.style.display = 'block'; // Show canvas
+                    console.log('VRHandler: Session started');
+                });
+
+                // Append canvas to DOM
+                this.renderer.domElement.style.display = 'none'; // Hidden by default
+                this.renderer.domElement.style.position = 'absolute';
+                this.renderer.domElement.style.top = '0';
+                this.renderer.domElement.style.left = '0';
+                this.renderer.domElement.style.zIndex = '999'; // On top when active
+                document.body.appendChild(this.renderer.domElement);
 
                 // Add VR Button
                 document.body.appendChild(VRButton.createButton(this.renderer));
