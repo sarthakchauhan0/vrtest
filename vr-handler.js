@@ -11,6 +11,7 @@
         intersected: [],
         tempMatrix: null,
         errorLog: [], // Store errors
+        panoGroup: null, // Container for alignment
 
         init: function () {
             if (this.initialized) return;
@@ -22,43 +23,44 @@
                 this.renderer.setSize(window.innerWidth, window.innerHeight);
                 this.renderer.xr.enabled = true;
 
-                // Handle session end to show errors
+                // Handle session end/start
                 this.renderer.xr.addEventListener('sessionend', () => {
-                    this.renderer.domElement.style.display = 'none'; // Hide canvas
-                    if (window.MarzipanoViewer) { // Optional: Resume Marzipano if needed
-                        // Logic to resume main viewer if paused
-                    }
+                    this.renderer.domElement.style.display = 'none';
                     if (this.errorLog.length > 0) {
                         this.showToast(this.errorLog.join('\n'));
-                        this.errorLog = []; // Clear after showing
+                        this.errorLog = [];
                     }
                 });
 
                 this.renderer.xr.addEventListener('sessionstart', () => {
-                    this.renderer.domElement.style.display = 'block'; // Show canvas
+                    this.renderer.domElement.style.display = 'block';
                     console.log('VRHandler: Session started');
                 });
 
-                // Append canvas to DOM
-                this.renderer.domElement.style.display = 'none'; // Hidden by default
+                // Append canvas
+                this.renderer.domElement.style.display = 'none';
                 this.renderer.domElement.style.position = 'absolute';
                 this.renderer.domElement.style.top = '0';
                 this.renderer.domElement.style.left = '0';
-                this.renderer.domElement.style.zIndex = '999'; // On top when active
+                this.renderer.domElement.style.zIndex = '999';
                 document.body.appendChild(this.renderer.domElement);
 
                 // Add VR Button
                 document.body.appendChild(VRButton.createButton(this.renderer));
 
-                // Create scene
+                // Create scene & camera
                 this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color(0x101010); // Dark grey background for void
 
-                // Create camera
                 this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
                 this.scene.add(this.camera);
 
-                // DEBUG: Add visual aid to confirm renderer is working
-                this.scene.background = new THREE.Color(0x505050); // Grey background
+                // Create wrapper group for content alignment
+                this.panoGroup = new THREE.Group();
+                // We assume the panorama was taken at eye-level approx 1.6m. 
+                // We lift the content so (0,0,0) of the content matches (0, 1.6, 0) of the tracking space.
+                this.panoGroup.position.set(0, 1.6, 0);
+                this.scene.add(this.panoGroup);
 
                 // Controllers
                 this.raycaster = new THREE.Raycaster();
@@ -125,7 +127,7 @@
                 if (toast.parentNode) {
                     toast.parentNode.removeChild(toast);
                 }
-            }, 5000 * Math.max(1, this.errorLog.length)); // Show longer if multiple errors
+            }, 5000 * Math.max(1, this.errorLog.length));
         },
 
         loadScene: function (sceneData) {
@@ -136,28 +138,73 @@
                 return;
             }
 
-            // Load textures
-            var loader = new THREE.CubeTextureLoader();
-            var path = 'tiles/' + sceneData.id + '/1/';
+            // Clear previous pano mesh
+            var oldMesh = this.panoGroup.getObjectByName('panoMesh');
+            if (oldMesh) {
+                this.panoGroup.remove(oldMesh);
+                if (oldMesh.geometry) oldMesh.geometry.dispose();
+                if (Array.isArray(oldMesh.material)) {
+                    oldMesh.material.forEach(m => m.dispose());
+                } else if (oldMesh.material) {
+                    oldMesh.material.dispose();
+                }
+            }
 
+            var path = 'tiles/' + sceneData.id + '/1/';
             console.log('VRHandler: Loading textures from', path);
 
+            // Three.js BoxGeometry face order: +x, -x, +y, -y, +z, -z
+            // Marzipano mappings:
+            // r (+x), l (-x), u (+y), d (-y), f (-z), b (+z)
+            // Note: In Three.js, +z is BACK, -z is FRONT.
+            // So we need: r, l, u, d, b, f
             var urls = [
-                path + 'r/0/0.jpg', // px - right
-                path + 'l/0/0.jpg', // nx - left
-                path + 'u/0/0.jpg', // py - up
-                path + 'd/0/0.jpg', // ny - down
-                path + 'b/0/0.jpg', // pz - back (Three.js uses +Z as back)
-                path + 'f/0/0.jpg'  // nz - front (Three.js uses -Z as front)
+                path + 'r/0/0.jpg', // Right (+x)
+                path + 'l/0/0.jpg', // Left (-x)
+                path + 'u/0/0.jpg', // Up (+y)
+                path + 'd/0/0.jpg', // Down (-y)
+                path + 'b/0/0.jpg', // Back (+z)
+                path + 'f/0/0.jpg'  // Front (-z)
             ];
 
-            loader.load(urls, (texture) => {
-                console.log('VRHandler: Texture loaded successfully');
-                this.scene.background = texture;
-            }, undefined, (err) => {
-                console.error('VRHandler: Error loading textures', err);
-                this.logError('Texture Load Failed: ' + (err.message || 'Unknown network error'));
-            });
+            var loader = new THREE.TextureLoader();
+            var materials = [];
+
+            var loadedCount = 0;
+            var loadTexture = (url) => {
+                return new Promise((resolve, reject) => {
+                    loader.load(url,
+                        (tex) => resolve(tex),
+                        undefined,
+                        (err) => reject(err)
+                    );
+                });
+            };
+
+            Promise.all(urls.map(url => loadTexture(url)))
+                .then(textures => {
+                    console.log('VRHandler: All textures loaded');
+                    textures.forEach(tex => {
+                        materials.push(new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide }));
+                    });
+
+                    // Create Box Mesh
+                    var geometry = new THREE.BoxGeometry(100, 100, 100);
+                    var mesh = new THREE.Mesh(geometry, materials);
+                    mesh.name = 'panoMesh';
+
+                    // Invert scale not needed because we used side: BackSide and correct face mapping
+                    // But verify Left/Right mirroring.
+                    // Usually Inside a box, +x is Right if we look -z.
+                    // Let's stick to standard.
+
+                    this.panoGroup.add(mesh);
+                })
+                .catch(err => {
+                    console.error('VRHandler: Error loading textures', err);
+                    this.logError('Texture Load Failed: ' + (err.message || 'Network error'));
+                });
+
 
             // Clear existing hotspots
             this.clearHotspots();
@@ -180,14 +227,14 @@
                 var y = radius * Math.sin(phi);
                 var z = -radius * Math.cos(theta) * Math.cos(phi);
 
-                var geometry = new THREE.SphereGeometry(0.2, 32, 32); // Reduced size to 20cm
-                var material = new THREE.MeshBasicMaterial({ color: 0xffffff }); // White for better visibility
+                var geometry = new THREE.SphereGeometry(0.2, 32, 32);
+                var material = new THREE.MeshBasicMaterial({ color: 0xffffff });
                 var sphere = new THREE.Mesh(geometry, material);
 
                 sphere.position.set(x, y, z);
                 sphere.userData = { target: hotspotData.target };
 
-                this.scene.add(sphere);
+                this.panoGroup.add(sphere); // Add to panoGroup so it aligns with skybox
                 this.hotspotObjects.push(sphere);
             } catch (e) {
                 this.logError('Hotspot Creation Error: ' + e.message);
@@ -196,7 +243,7 @@
 
         clearHotspots: function () {
             this.hotspotObjects.forEach(obj => {
-                this.scene.remove(obj);
+                this.panoGroup.remove(obj);
                 if (obj.geometry) obj.geometry.dispose();
                 if (obj.material) obj.material.dispose();
             });
@@ -212,20 +259,23 @@
         },
 
         onSelectStart: function (event) {
-            console.log('VRHandler: Controller selectstart event');
             var controller = event.target;
             controller.userData.isSelecting = true;
         },
 
         onSelectEnd: function (event) {
-            console.log('VRHandler: Controller selectend event');
             var controller = event.target;
             controller.userData.isSelecting = false;
 
             // Check for intersections
+            // Note: Raycasting needs to account for panoGroup position?
+            // raycaster.intersectObjects(this.hotspotObjects) works in world space.
+            // hotspotObjects are children of panoGroup.
+            // three.js handles world matrix automatically.
+
             var intersections = this.getIntersections(controller);
             if (intersections.length > 0) {
-                console.log('VRHandler: Intersection detected on selectend');
+                console.log('VRHandler: Intersection detected');
                 var intersection = intersections[0];
                 var object = intersection.object;
                 this.handleHotspotClick(object);
@@ -242,7 +292,6 @@
         handleHotspotClick: function (object) {
             console.log('VRHandler: Hotspot clicked', object.userData.target);
             if (object.userData.target) {
-                // Find scene data
                 var targetId = object.userData.target;
                 var sceneData = findSceneDataById(targetId);
 
@@ -262,24 +311,19 @@
         },
 
         animate: function () {
-            // Render
             if (this.renderer && this.scene && this.camera) {
                 this.renderer.render(this.scene, this.camera);
             }
-
-            // Update controller visual feedback (highlighting hotspots)
             this.updateIntersections();
         },
 
         updateIntersections: function () {
-            // Optional: highlight hotspots when hovering
-            // For now, keep it simple.
+            // Optional highlighting
         }
     };
 
     window.VRHandler = VRHandler;
 
-    // Helper to find data (duplicated logic, but simple enough)
     function findSceneDataById(id) {
         if (window.APP_DATA && window.APP_DATA.scenes) {
             return window.APP_DATA.scenes.find(s => s.id === id);
