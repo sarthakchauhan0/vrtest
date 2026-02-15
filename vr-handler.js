@@ -10,81 +10,118 @@
         raycaster: null,
         intersected: [],
         tempMatrix: null,
+        errorLog: [], // Store errors
 
         init: function () {
             if (this.initialized) return;
 
-            // Create Three.js renderer
-            this.renderer = new THREE.WebGLRenderer({ antialias: true });
-            this.renderer.setPixelRatio(window.devicePixelRatio);
-            this.renderer.setSize(window.innerWidth, window.innerHeight);
-            this.renderer.xr.enabled = true;
+            try {
+                // Create Three.js renderer
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                this.renderer.setPixelRatio(window.devicePixelRatio);
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.xr.enabled = true;
 
-            // Add VR Button
-            document.body.appendChild(VRButton.createButton(this.renderer));
+                // Handle session end to show errors
+                this.renderer.xr.addEventListener('sessionend', () => {
+                    if (this.errorLog.length > 0) {
+                        this.showToast(this.errorLog.join('\n'));
+                        this.errorLog = []; // Clear after showing
+                    }
+                });
 
-            // Create scene
-            this.scene = new THREE.Scene();
+                // Add VR Button
+                document.body.appendChild(VRButton.createButton(this.renderer));
 
-            // Create camera
-            this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
-            this.scene.add(this.camera); // Add camera to scene for controllers to be attached relative to it (usually rig)
+                // Create scene
+                this.scene = new THREE.Scene();
 
-            // Controllers
-            this.raycaster = new THREE.Raycaster();
-            this.tempMatrix = new THREE.Matrix4();
+                // Create camera
+                this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.scene.add(this.camera);
 
-            var controller1 = this.renderer.xr.getController(0);
-            controller1.addEventListener('selectstart', this.onSelectStart.bind(this));
-            controller1.addEventListener('selectend', this.onSelectEnd.bind(this));
-            this.scene.add(controller1);
-            this.controllers.push(controller1);
+                // Controllers
+                this.raycaster = new THREE.Raycaster();
+                this.tempMatrix = new THREE.Matrix4();
 
-            var controller2 = this.renderer.xr.getController(1);
-            controller2.addEventListener('selectstart', this.onSelectStart.bind(this));
-            controller2.addEventListener('selectend', this.onSelectEnd.bind(this));
-            this.scene.add(controller2);
-            this.controllers.push(controller2);
+                var controller1 = this.renderer.xr.getController(0);
+                controller1.addEventListener('selectstart', this.onSelectStart.bind(this));
+                controller1.addEventListener('selectend', this.onSelectEnd.bind(this));
+                this.scene.add(controller1);
+                this.controllers.push(controller1);
 
-            // Controller visualizers
-            var controllerModelFactory = {
-                // Basic line for now. Ideally use XRControllerModelFactory but keeping it simple to avoid more deps
-                createVisualizer: function () {
-                    var geometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]);
-                    var line = new THREE.Line(geometry);
-                    line.scale.z = 5;
-                    return line;
+                var controller2 = this.renderer.xr.getController(1);
+                controller2.addEventListener('selectstart', this.onSelectStart.bind(this));
+                controller2.addEventListener('selectend', this.onSelectEnd.bind(this));
+                this.scene.add(controller2);
+                this.controllers.push(controller2);
+
+                // Controller visualizers
+                var geometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, - 1)]);
+                var line = new THREE.Line(geometry);
+                line.name = 'line';
+                line.scale.z = 5;
+
+                controller1.add(line.clone());
+                controller2.add(line.clone());
+
+                this.initialized = true;
+
+                // Handle resize
+                window.addEventListener('resize', this.onWindowResize.bind(this), false);
+
+                // Start loop
+                console.log('VRHandler: Starting animation loop');
+                this.renderer.setAnimationLoop(this.animate.bind(this));
+            } catch (e) {
+                this.logError('Init Error: ' + e.message);
+            }
+        },
+
+        logError: function (msg) {
+            console.error('VRHandler Error:', msg);
+            this.errorLog.push(msg);
+        },
+
+        showToast: function (msg) {
+            var toast = document.createElement('div');
+            toast.style.position = 'fixed';
+            toast.style.bottom = '20px';
+            toast.style.left = '50%';
+            toast.style.transform = 'translateX(-50%)';
+            toast.style.backgroundColor = 'rgba(255, 0, 0, 0.9)';
+            toast.style.color = 'white';
+            toast.style.padding = '15px 25px';
+            toast.style.borderRadius = '5px';
+            toast.style.zIndex = '10000';
+            toast.style.maxWidth = '80%';
+            toast.style.wordWrap = 'break-word';
+            toast.style.fontFamily = 'sans-serif';
+            toast.innerText = 'VR Error: ' + msg;
+
+            document.body.appendChild(toast);
+
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
                 }
-            };
-
-            var geometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, - 1)]);
-            var line = new THREE.Line(geometry);
-            line.name = 'line';
-            line.scale.z = 5;
-
-            controller1.add(line.clone());
-            controller2.add(line.clone());
-
-            this.initialized = true;
-
-            // Handle resize
-            window.addEventListener('resize', this.onWindowResize.bind(this), false);
-
-            // Start loop
-            this.renderer.setAnimationLoop(this.animate.bind(this));
+            }, 5000 * Math.max(1, this.errorLog.length)); // Show longer if multiple errors
         },
 
         loadScene: function (sceneData) {
+            console.log('VRHandler: loadScene called with', sceneData ? sceneData.id : 'null');
             if (!this.initialized) this.init();
+            if (!sceneData) {
+                this.logError('Scene data is missing');
+                return;
+            }
 
             // Load textures
-            // Marzipano tiles: tiles/{id}/1/{face}/0/0.jpg
-            // Mapping: px=r, nx=l, py=u, ny=d, pz=f, nz=b
             var loader = new THREE.CubeTextureLoader();
             var path = 'tiles/' + sceneData.id + '/1/';
 
-            // ThreeJS expects: px, nx, py, ny, pz, nz
-            // Marzipano faces: r, l, u, d, f, b
+            console.log('VRHandler: Loading textures from', path);
+
             var urls = [
                 path + 'r/0/0.jpg', // px - right
                 path + 'l/0/0.jpg', // nx - left
@@ -95,7 +132,11 @@
             ];
 
             loader.load(urls, (texture) => {
+                console.log('VRHandler: Texture loaded successfully');
                 this.scene.background = texture;
+            }, undefined, (err) => {
+                console.error('VRHandler: Error loading textures', err);
+                this.logError('Texture Load Failed: ' + (err.message || 'Unknown network error'));
             });
 
             // Clear existing hotspots
@@ -110,42 +151,27 @@
         },
 
         createHotspot: function (hotspotData) {
-            // Convert Yaw/Pitch to Cartesian
-            // Marzipano coords: Yaw is rotation around Y axis. Pitch is rotation around X axis (local).
-            // Standard spherical to cartesian conversion.
-            // x = r * sin(theta) * cos(phi)
-            // y = r * sin(phi)
-            // z = r * cos(theta) * cos(phi)
-            // But verify Marzipano coordinate system.
-            // Marzipano: yaw=0 is center of 'f' face?
-            // If yaw=0, pitch=0 -> pointing at -Z (front) in Three.js?
+            try {
+                var radius = 10;
+                var phi = hotspotData.pitch; // Elevation (-PI/2 to PI/2)
+                var theta = hotspotData.yaw; // Azimuth
 
-            // Let's assume standard definitions:
-            // Yaw: rotation around Y. 0 = -Z
-            // Pitch: elevation.
+                var x = -radius * Math.sin(theta) * Math.cos(phi);
+                var y = radius * Math.sin(phi);
+                var z = -radius * Math.cos(theta) * Math.cos(phi);
 
-            var radius = 10;
-            var phi = hotspotData.pitch; // Elevation (-PI/2 to PI/2)
-            var theta = hotspotData.yaw; // Azimuth
+                var geometry = new THREE.SphereGeometry(0.5, 32, 32);
+                var material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+                var sphere = new THREE.Mesh(geometry, material);
 
-            // Conversion logic to align with Three.js camera looking at -Z
-            // x = -radius * Math.sin(theta) * Math.cos(phi);
-            // y = radius * Math.sin(phi);
-            // z = -radius * Math.cos(theta) * Math.cos(phi);
+                sphere.position.set(x, y, z);
+                sphere.userData = { target: hotspotData.target };
 
-            var x = -radius * Math.sin(theta) * Math.cos(phi);
-            var y = radius * Math.sin(phi);
-            var z = -radius * Math.cos(theta) * Math.cos(phi);
-
-            var geometry = new THREE.SphereGeometry(0.5, 32, 32);
-            var material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-            var sphere = new THREE.Mesh(geometry, material);
-
-            sphere.position.set(x, y, z);
-            sphere.userData = { target: hotspotData.target };
-
-            this.scene.add(sphere);
-            this.hotspotObjects.push(sphere);
+                this.scene.add(sphere);
+                this.hotspotObjects.push(sphere);
+            } catch (e) {
+                this.logError('Hotspot Creation Error: ' + e.message);
+            }
         },
 
         clearHotspots: function () {
@@ -158,8 +184,7 @@
         },
 
         onWindowResize: function () {
-            // We don't resize renderer if in VR, usually handled by WebXR manager, but for window resizing in preview:
-            if (!this.renderer.xr.isPresenting) {
+            if (this.renderer && this.renderer.xr && !this.renderer.xr.isPresenting) {
                 this.camera.aspect = window.innerWidth / window.innerHeight;
                 this.camera.updateProjectionMatrix();
                 this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -167,17 +192,20 @@
         },
 
         onSelectStart: function (event) {
+            console.log('VRHandler: Controller selectstart event');
             var controller = event.target;
             controller.userData.isSelecting = true;
         },
 
         onSelectEnd: function (event) {
+            console.log('VRHandler: Controller selectend event');
             var controller = event.target;
             controller.userData.isSelecting = false;
 
             // Check for intersections
             var intersections = this.getIntersections(controller);
             if (intersections.length > 0) {
+                console.log('VRHandler: Intersection detected on selectend');
                 var intersection = intersections[0];
                 var object = intersection.object;
                 this.handleHotspotClick(object);
@@ -192,25 +220,32 @@
         },
 
         handleHotspotClick: function (object) {
+            console.log('VRHandler: Hotspot clicked', object.userData.target);
             if (object.userData.target) {
                 // Find scene data
                 var targetId = object.userData.target;
-                var sceneData = findSceneDataById(targetId); // Helper function needed
+                var sceneData = findSceneDataById(targetId);
 
                 if (sceneData) {
+                    console.log('VRHandler: Loading target scene', targetId);
                     this.loadScene(sceneData);
-                    // Also update existing non-VR viewer if possible, or synchronize state
-                    // Trigger global event or call global function
+
                     if (window.switchSceneById) {
                         window.switchSceneById(targetId);
                     }
+                } else {
+                    var msg = 'Target scene data not found for ID: ' + targetId;
+                    console.warn('VRHandler:', msg);
+                    this.logError(msg);
                 }
             }
         },
 
         animate: function () {
             // Render
-            this.renderer.render(this.scene, this.camera);
+            if (this.renderer && this.scene && this.camera) {
+                this.renderer.render(this.scene, this.camera);
+            }
 
             // Update controller visual feedback (highlighting hotspots)
             this.updateIntersections();
